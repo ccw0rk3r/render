@@ -32,10 +32,22 @@
 
 <progress id="progress" value="0" max="1" style="width:100%; margin-top:10px;"></progress>
 
+<h3>Логи:</h3>
+<pre id="log" style="background:#eee; color:#000; padding:10px; height:200px; overflow:auto;"></pre>
+
 <script src="https://unpkg.com/@ffmpeg/ffmpeg@0.12.0/dist/ffmpeg.min.js"></script>
 <script>
 const { createFFmpeg, fetchFile } = FFmpeg;
-const ffmpeg = createFFmpeg({ log:true });
+const ffmpeg = createFFmpeg({
+    log:true,
+    progress: ({ ratio }) => { progressBar.value = ratio; },
+    logger: ({ type, message }) => {
+        const line = document.createElement('div');
+        line.textContent = `[${type}] ${message}`;
+        logEl.appendChild(line);
+        logEl.scrollTop = logEl.scrollHeight;
+    }
+});
 
 const photoFilesInput = document.getElementById('photoFiles');
 const bgAudioFileInput = document.getElementById('bgAudioFile');
@@ -44,6 +56,7 @@ const bgVolumeInput = document.getElementById('bgVolume');
 const voiceVolumeInput = document.getElementById('voiceVolume');
 const renderBtn = document.getElementById('renderBtn');
 const progressBar = document.getElementById('progress');
+const logEl = document.getElementById('log');
 
 let images = [];
 let bgAudioFile, voiceAudioFile;
@@ -52,17 +65,24 @@ photoFilesInput.addEventListener('change', e => { images = Array.from(e.target.f
 bgAudioFileInput.addEventListener('change', e => { bgAudioFile = e.target.files[0]; });
 voiceAudioFileInput.addEventListener('change', e => { voiceAudioFile = e.target.files[0]; });
 
-renderBtn.addEventListener('click', async ()=>{
+renderBtn.addEventListener('click', async () => {
     if(images.length===0) return alert('Добавьте фото!');
     if(!voiceAudioFile) return alert('Добавьте голосовое аудио!');
 
     progressBar.value = 0;
-    if(!ffmpeg.isLoaded()) await ffmpeg.load();
+    logEl.textContent = '';
+    
+    if(!ffmpeg.isLoaded()) {
+        logEl.textContent += "Загрузка FFmpeg...\n";
+        await ffmpeg.load();
+    }
 
     // Загружаем фото
+    logEl.textContent += `Загрузка ${images.length} фото...\n`;
     for(let i=0;i<images.length;i++){
         ffmpeg.FS('writeFile', `img${i}.png`, await fetchFile(images[i]));
     }
+
     ffmpeg.FS('writeFile', 'voice.mp3', await fetchFile(voiceAudioFile));
     if(bgAudioFile) ffmpeg.FS('writeFile', 'bg.mp3', await fetchFile(bgAudioFile));
 
@@ -71,28 +91,41 @@ renderBtn.addEventListener('click', async ()=>{
     listTxt += `\nfile 'img${images.length-1}.png'`;
     ffmpeg.FS('writeFile', 'list.txt', listTxt);
 
-    progressBar.value = 0.1;
+    logEl.textContent += "Генерация видео...\n";
 
-    // Видео с увеличением
-    await ffmpeg.run('-f','concat','-safe','0','-i','list.txt','-vf',"zoompan=z='if(lte(zoom,1.15),zoom+0.003,zoom)':d=125",' -r','25','video.mp4');
+    try {
+        await ffmpeg.run(
+            '-f','concat','-safe','0','-i','list.txt',
+            '-vf',"zoompan=z='if(lte(zoom,1.15),zoom+0.003,zoom)':d=125",
+            '-r','25','video.mp4'
+        );
+        logEl.textContent += "Видео сгенерировано.\n";
 
-    progressBar.value = 0.6;
+        let audioCmd = ['-i','video.mp4','-i','voice.mp3'];
+        if(bgAudioFile){
+            audioCmd.push(
+                '-i','bg.mp3',
+                '-filter_complex',`[1:a]volume=${voiceVolumeInput.value}[v];[2:a]volume=${bgVolumeInput.value}[b];[v][b]amix=inputs=2[a]`,
+                '-map','0:v','-map','[a]'
+            );
+        } else {
+            audioCmd.push('-map','0:v','-map','1:a');
+        }
+        audioCmd.push('output.mp4');
 
-    // Добавляем аудио
-    let audioCmd = ['-i','video.mp4','-i','voice.mp3'];
-    if(bgAudioFile){
-        audioCmd.push('-i','bg.mp3','-filter_complex',`[1:a]volume=${voiceVolumeInput.value}[v];[2:a]volume=${bgVolumeInput.value}[b];[v][b]amix=inputs=2[a]`,'-map','0:v','-map','[a]');
-    } else {
-        audioCmd.push('-map','0:v','-map','1:a');
+        logEl.textContent += "Смешивание аудио...\n";
+        await ffmpeg.run(...audioCmd);
+
+        logEl.textContent += "Готово! Скачивание видео...\n";
+
+        const data = ffmpeg.FS('readFile','output.mp4');
+        const url = URL.createObjectURL(new Blob([data.buffer],{type:'video/mp4'}));
+        const a = document.createElement('a'); a.href = url; a.download='slideshow.mp4'; a.click();
+
+        logEl.textContent += "Видео скачано.\n";
+    } catch(err){
+        logEl.textContent += `Ошибка: ${err.message}\n`;
     }
-    audioCmd.push('output.mp4');
-    await ffmpeg.run(...audioCmd);
-
-    progressBar.value = 1;
-
-    const data = ffmpeg.FS('readFile','output.mp4');
-    const url = URL.createObjectURL(new Blob([data.buffer],{type:'video/mp4'}));
-    const a = document.createElement('a'); a.href=url; a.download='slideshow.mp4'; a.click();
 });
 </script>
 </body>
