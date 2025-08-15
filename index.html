@@ -7,7 +7,7 @@
 body { margin:0; font-family:'Segoe UI',sans-serif; background:#f5f5f5; color:#333; display:flex; flex-direction:column; align-items:center; min-height:100vh; }
 h1 { margin:20px; color:#111; }
 .block { background:#fff; border-radius:15px; box-shadow:0 5px 20px rgba(0,0,0,0.1); padding:20px; margin:10px 0; width:90%; max-width:900px; }
-#dropzone { width:100%; height:200px; border:2px dashed #aaa; border-radius:15px; display:flex; align-items:center; justify-content:center; text-align:center; transition:border-color .3s, background .3s; cursor:pointer; }
+#dropzone { width:100%; height:200px; border:2px dashed #aaa; border-radius:15px; display:flex; align-items:center; justify-content:center; text-align:center; transition:border-color .3s, background .3s; cursor:pointer; position:relative; }
 #dropzone.dragover { border-color:#0af; background:#e0f7ff; }
 .controls { display:flex; flex-wrap:wrap; gap:20px; align-items:center; justify-content:flex-start; margin-top:10px; }
 .control { display:flex; flex-direction:column; align-items:flex-start; }
@@ -22,7 +22,8 @@ button:hover { background:#08c; transform:scale(1.05); }
 <h1>Слайдшоу в MP4</h1>
 
 <div class="block">
-  <div id="dropzone">Перетащите сюда фото или <button id="selectFilesBtn">Выбрать файлы</button></div>
+  <div id="dropzone">Перетащите сюда фото</div>
+  <button id="selectFilesBtn" style="margin-top:15px;">Выбрать фото</button>
 </div>
 
 <div class="block">
@@ -61,27 +62,31 @@ const progressBar = document.querySelector('#progress > div');
 let images = [];
 let bgAudioFile, voiceAudioFile;
 
+// Создаем скрытый input для выбора фото
+const photoInput = document.createElement('input');
+photoInput.type = 'file';
+photoInput.accept = 'image/*';
+photoInput.multiple = true;
+
+photoInput.addEventListener('change', () => {
+    handleFiles(photoInput.files);
+});
+
+selectFilesBtn.addEventListener('click', () => photoInput.click());
+
+// Drag-and-drop
 dropzone.addEventListener('dragover', e=>{ e.preventDefault(); dropzone.classList.add('dragover'); });
 dropzone.addEventListener('dragleave', e=>{ dropzone.classList.remove('dragover'); });
 dropzone.addEventListener('drop', e=>{
     e.preventDefault(); dropzone.classList.remove('dragover'); handleFiles(e.dataTransfer.files);
 });
 
-selectFilesBtn.addEventListener('click', ()=>{ fileInput.click(); });
-
-const fileInput = document.createElement('input');
-fileInput.type = 'file';
-fileInput.accept = 'image/*';
-fileInput.multiple = true;
-fileInput.addEventListener('change', ()=>{ handleFiles(fileInput.files); });
-
 function handleFiles(fileList){
     const files = Array.from(fileList).filter(f=>f.type.startsWith('image/'));
     files.forEach((file,i)=>{
         images.push({file,name:`img${images.length+i}.png`});
     });
-    dropzone.innerHTML = `${images.length} фото загружено или <button id="selectFilesBtn">Выбрать файлы</button>`;
-    document.getElementById('selectFilesBtn').addEventListener('click', ()=>{ fileInput.click(); });
+    dropzone.textContent = `${images.length} фото загружено`;
 }
 
 bgAudioFileInput.addEventListener('change', e=>{ bgAudioFile = e.target.files[0]; });
@@ -105,7 +110,6 @@ renderBtn.addEventListener('click', async ()=>{
 
     progressBar.style.width='10%';
 
-    // Видео с zoompan
     await ffmpeg.run('-f','concat','-safe','0','-i','list.txt','-vf',"zoompan=z='if(lte(zoom,1.15),zoom+0.003,zoom)':d=125",' -r','25','video.mp4');
 
     progressBar.style.width='60%';
