@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Слайдшоу в MP4</title>
+<style>
+body { margin:0; font-family:'Segoe UI',sans-serif; background:#111; color:#fff; display:flex; flex-direction:column; align-items:center; justify-content:flex-start; min-height:100vh; }
+h1 { margin:20px; }
+#dropzone { width:90%; max-width:800px; height:200px; border:2px dashed #555; border-radius:15px; display:flex; align-items:center; justify-content:center; margin:20px 0; text-align:center; transition:border-color .3s; }
+#dropzone.dragover { border-color:#0af; }
+.controls { display:flex; gap:20px; flex-wrap:wrap; align-items:center; margin-bottom:20px; }
+.control { display:flex; flex-direction:column; align-items:center; }
+input[type=range] { width:150px; }
+button { padding:10px 20px; background:#0af; border:none; border-radius:10px; cursor:pointer; color:#111; font-weight:bold; transition:background .2s; }
+button:hover { background:#08c; }
+#progress { width:80%; max-width:800px; margin:10px 0; }
+</style>
+</head>
+<body>
+<h1>Слайдшоу в MP4</h1>
+<div id="dropzone">Перетащите сюда фото</div>
+<div class="controls">
+  <div class="control">
+    <label>Фоновая музыка</label>
+    <input type="file" id="bgAudioFile" accept="audio/*">
+    <input type="range" id="bgVolume" min="0" max="1" step="0.01" value="0.5">
+  </div>
+  <div class="control">
+    <label>Голос</label>
+    <input type="file" id="voiceAudioFile" accept="audio/*">
+    <input type="range" id="voiceVolume" min="0" max="1" step="0.01" value="0.7">
+  </div>
+  <button id="renderBtn">Собрать видео</button>
+</div>
+<progress id="progress" value="0" max="1"></progress>
+<script src="https://unpkg.com/@ffmpeg/ffmpeg@0.12.0/dist/ffmpeg.min.js"></script>
+<script>
+const { createFFmpeg, fetchFile } = FFmpeg;
+const ffmpeg = createFFmpeg({ log: true });
+const dropzone = document.getElementById('dropzone');
+const renderBtn = document.getElementById('renderBtn');
+const bgAudioFileInput = document.getElementById('bgAudioFile');
+const voiceAudioFileInput = document.getElementById('voiceAudioFile');
+const bgVolumeInput = document.getElementById('bgVolume');
+const voiceVolumeInput = document.getElementById('voiceVolume');
+const progress = document.getElementById('progress');
+
+let images = [];
+let bgAudioFile, voiceAudioFile;
+
+dropzone.addEventListener('dragover', e=>{e.preventDefault(); dropzone.classList.add('dragover');});
+dropzone.addEventListener('dragleave', e=>{dropzone.classList.remove('dragover');});
+dropzone.addEventListener('drop', e=>{
+    e.preventDefault(); dropzone.classList.remove('dragover');
+    const files = Array.from(e.dataTransfer.files).filter(f=>f.type.startsWith('image/'));
+    files.forEach((file,i)=>{
+        images.push({file,name:`img${i}.png`});
+    });
+    dropzone.textContent = `${images.length} фото загружено`;
+});
+
+bgAudioFileInput.addEventListener('change', e => { bgAudioFile = e.target.files[0]; });
+voiceAudioFileInput.addEventListener('change', e => { voiceAudioFile = e.target.files[0]; });
+
+renderBtn.addEventListener('click', async ()=>{
+    if(images.length===0) return alert('Добавьте фото!');
+    if(!voiceAudioFile) return alert('Добавьте голосовое аудио!');
+    progress.value=0;
+    if(!ffmpeg.isLoaded()) await ffmpeg.load();
+
+    // Загружаем файлы в виртуальную FS ffmpeg
+    for(let img of images){
+        ffmpeg.FS('writeFile', img.name, await fetchFile(img.file));
+    }
+    ffmpeg.FS('writeFile', 'voice.mp3', await fetchFile(voiceAudioFile));
+    if(bgAudioFile) ffmpeg.FS('writeFile', 'bg.mp3', await fetchFile(bgAudioFile));
+
+    // Генерация списка для ffmpeg
+    let listTxt = images.map(img=>`file '${img.name}'\nduration 5`).join('\n');
+    listTxt += `\nfile '${images[images.length-1].name}'`; // повтор последнего для правильной длительности
+    ffmpeg.FS('writeFile', 'list.txt', listTxt);
+
+    // Формируем видео из изображений с эффектом масштабирования
+    const filter = "zoompan=z='if(lte(zoom,1.15),zoom+0.003,zoom)':d=125"; // 5 сек * 25fps = 125 кадров
+    await ffmpeg.run(
+        '-f','concat','-safe','0','-i','list.txt','-vf',filter,'-r','25','video.mp4'
+    );
+
+    // Добавляем аудио: подгоняем bg под длину voice
+    let audioCmd = ['-i','video.mp4','-i','voice.mp3'];
+    if(bgAudioFile){
+        audioCmd.push('-i','bg.mp3','-filter_complex',`[1:a]volume=${voiceVolumeInput.value}[v];[2:a]volume=${bgVolumeInput.value}[b];[v][b]amix=inputs=2[a]`,'-map','0:v','-map','[a]');
+    } else {
+        audioCmd.push('-map','0:v','-map','1:a');
+    }
+    audioCmd.push('output.mp4');
+    await ffmpeg.run(...audioCmd);
+
+    // Скачиваем
+    const data = ffmpeg.FS('readFile','output.mp4');
+    const url = URL.createObjectURL(new Blob([data.buffer],{type:'video/mp4'}));
+    const a = document.createElement('a'); a.href=url; a.download='slideshow.mp4'; a.click();
+});
+</script>
+</body>
+</html>
